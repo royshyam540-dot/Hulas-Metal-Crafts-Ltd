@@ -1,0 +1,6 @@
+{
+  "name": "Hulas Metal Crafts Ltd. - Industrial Stainless Steel",
+  "description": "Leading manufacturer of stainless steel utensils and industrial SS pipes. Complete business portal and product catalog.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
