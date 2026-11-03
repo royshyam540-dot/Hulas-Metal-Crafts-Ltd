@@ -26,6 +26,9 @@ import {
   INITIAL_NOTIFICATIONS,
   INITIAL_ACTIVITY_LOGS
 } from '../data/initialData';
+import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabaseClient';
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const STORAGE_KEYS = {
   PRODUCTS: 'hmc_products_v1',
@@ -401,7 +404,168 @@ export const store = {
     );
     this.logActivity('New Inquiry', 'Inquiry', `Inquiry ${inquiryNumber} received from ${newInquiry.customerName}`);
     notify();
+
+    // Asynchronously push to Supabase if configured
+    this.syncInquiryToSupabase(newInquiry).catch((err) => {
+      console.warn('Background Supabase inquiry sync error:', err);
+    });
+
     return newInquiry;
+  },
+
+  // --- SUPABASE CLOUD SYNC HELPERS ---
+  async syncInquiryToSupabase(inquiry: Inquiry): Promise<{ success: boolean; error?: string }> {
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      console.info('Supabase is not configured yet. Inquiry stored in local database.');
+      return { success: false, error: 'Supabase credentials not configured' };
+    }
+
+    try {
+      const payload: Record<string, any> = {
+        inquiry_number: inquiry.inquiryNumber,
+        customer_name: inquiry.customerName,
+        company_name: inquiry.companyName || null,
+        phone: inquiry.phone,
+        whatsapp_number: inquiry.whatsappNumber || inquiry.phone,
+        email: inquiry.email,
+        address: inquiry.address || null,
+        product_name: inquiry.productName,
+        product_code: inquiry.productCode || null,
+        category: inquiry.category || null,
+        required_size: inquiry.requiredSize || null,
+        required_grade: inquiry.requiredGrade || null,
+        required_thickness: inquiry.requiredThickness || null,
+        gauge: inquiry.gauge || null,
+        required_quantity: Number(inquiry.requiredQuantity) || 1,
+        unit: inquiry.unit || 'Pcs',
+        message: inquiry.message,
+        preferred_contact_method: inquiry.preferredContactMethod || 'WhatsApp',
+        status: inquiry.status || 'New',
+        assigned_staff: inquiry.assignedStaff || null,
+        internal_notes: inquiry.internalNotes || []
+      };
+
+      if (inquiry.productId && UUID_REGEX.test(inquiry.productId)) {
+        payload.product_id = inquiry.productId;
+      }
+
+      const { data, error } = await supabase.from('inquiries').insert([payload]).select();
+      if (error) {
+        console.error('Supabase inquiries insert error:', error);
+        return { success: false, error: error.message };
+      }
+      console.log('Inquiry successfully synced to Supabase public.inquiries:', data);
+      return { success: true };
+    } catch (err: any) {
+      console.error('Failed to sync inquiry to Supabase:', err);
+      return { success: false, error: err?.message || 'Network error' };
+    }
+  },
+
+  async syncContactMessageToSupabase(msg: ContactMessage): Promise<{ success: boolean; error?: string }> {
+    const supabase = getSupabaseClient();
+    if (!supabase) return { success: false, error: 'Supabase not configured' };
+
+    try {
+      const { data, error } = await supabase.from('contact_messages').insert([{
+        name: msg.name,
+        company: msg.company || null,
+        email: msg.email,
+        phone: msg.phone,
+        subject: msg.subject,
+        message: msg.message,
+        is_read: false
+      }]).select();
+
+      if (error) {
+        console.error('Supabase contact_messages insert error:', error);
+        return { success: false, error: error.message };
+      }
+      return { success: true };
+    } catch (err: any) {
+      console.error('Failed to sync contact message to Supabase:', err);
+      return { success: false, error: err?.message || 'Network error' };
+    }
+  },
+
+  async syncAllInquiriesToSupabase(): Promise<{ total: number; synced: number; errors: number; lastError?: string }> {
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      throw new Error('Supabase project URL & Anon Key are not configured. Please set them in Admin Settings.');
+    }
+
+    let synced = 0;
+    let errors = 0;
+    let lastError = '';
+
+    for (const inq of state.inquiries) {
+      const res = await this.syncInquiryToSupabase(inq);
+      if (res.success) synced++;
+      else {
+        errors++;
+        lastError = res.error || '';
+      }
+    }
+
+    return { total: state.inquiries.length, synced, errors, lastError };
+  },
+
+  async fetchInquiriesFromSupabase(): Promise<number> {
+    const supabase = getSupabaseClient();
+    if (!supabase) return 0;
+
+    try {
+      const { data, error } = await supabase
+        .from('inquiries')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Failed to fetch inquiries from Supabase:', error);
+        return 0;
+      }
+
+      if (data && data.length > 0) {
+        const mapped: Inquiry[] = data.map((row: any) => ({
+          id: row.id,
+          inquiryNumber: row.inquiry_number || `HMC-INQ-${row.id.slice(0, 8)}`,
+          customerName: row.customer_name,
+          companyName: row.company_name,
+          phone: row.phone,
+          whatsappNumber: row.whatsapp_number,
+          email: row.email,
+          address: row.address,
+          productId: row.product_id,
+          productName: row.product_name,
+          productCode: row.product_code,
+          category: row.category,
+          requiredSize: row.required_size,
+          requiredGrade: row.required_grade,
+          requiredThickness: row.required_thickness,
+          gauge: row.gauge,
+          requiredQuantity: row.required_quantity,
+          unit: row.unit,
+          message: row.message,
+          preferredContactMethod: row.preferred_contact_method || 'WhatsApp',
+          status: row.status || 'New',
+          assignedStaff: row.assigned_staff,
+          internalNotes: Array.isArray(row.internal_notes) ? row.internal_notes : [],
+          followUpDate: row.follow_up_date,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at
+        }));
+
+        state.inquiries = mapped;
+        setStorage(STORAGE_KEYS.INQUIRIES, state.inquiries);
+        notify();
+        return mapped.length;
+      }
+      return 0;
+    } catch (err) {
+      console.error('Error in fetchInquiriesFromSupabase:', err);
+      return 0;
+    }
   },
 
   updateInquiryStatus(id: string, status: InquiryStatus, remarks?: string) {
@@ -487,6 +651,12 @@ export const store = {
     );
     this.logActivity('Contact Form', 'Inquiry', `Message received from ${newMsg.name} (${newMsg.email})`);
     notify();
+
+    // Asynchronously push to Supabase if configured
+    this.syncContactMessageToSupabase(newMsg).catch((err) => {
+      console.warn('Background Supabase contact message sync error:', err);
+    });
+
     return newMsg;
   },
 

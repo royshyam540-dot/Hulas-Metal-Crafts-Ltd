@@ -14,6 +14,7 @@ import {
   HelpCircle 
 } from 'lucide-react';
 import { store, useStore } from '../../services/store';
+import { isSupabaseConfigured } from '../../lib/supabaseClient';
 import { useToast } from '../common/Toast';
 
 interface InquiryModalProps {
@@ -96,7 +97,12 @@ export const InquiryModal: React.FC<InquiryModalProps> = ({
       });
 
       setSubmittedInquiry(created);
-      success(`Inquiry ${created.inquiryNumber} submitted successfully! Our sales desk will contact you.`);
+
+      if (isSupabaseConfigured()) {
+        success(`Inquiry ${created.inquiryNumber} received & synced with Supabase live database!`);
+      } else {
+        success(`Inquiry ${created.inquiryNumber} submitted successfully!`);
+      }
     } catch (err) {
       error('Failed to submit inquiry. Please try again.');
     }
@@ -181,6 +187,19 @@ export const InquiryModal: React.FC<InquiryModalProps> = ({
                 <span className="text-zinc-400">Preferred Channel:</span>
                 <span className="font-semibold text-zinc-900">{submittedInquiry.preferredContactMethod}</span>
               </div>
+            </div>
+
+            <div className="flex flex-col items-center gap-1.5 pt-1">
+              {isSupabaseConfigured() ? (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  Synced to Supabase Cloud Database (public.inquiries)
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-xs font-medium">
+                  Stored in local database (Configure Supabase in Admin Settings to mirror to cloud)
+                </span>
+              )}
             </div>
 
             <p className="text-xs text-zinc-500">

@@ -15,7 +15,7 @@ import {
   Sparkles 
 } from 'lucide-react';
 import { useStore, store } from '../../services/store';
-import { getSupabaseConfig, saveSupabaseConfig, isSupabaseConfigured } from '../../lib/supabaseClient';
+import { getSupabaseConfig, saveSupabaseConfig, isSupabaseConfigured, getSupabaseClient } from '../../lib/supabaseClient';
 import { useToast } from '../common/Toast';
 
 export const SettingsView: React.FC = () => {
@@ -26,6 +26,45 @@ export const SettingsView: React.FC = () => {
   const [supabaseUrl, setSupabaseUrl] = useState(getSupabaseConfig().url);
   const [supabaseAnonKey, setSupabaseAnonKey] = useState(getSupabaseConfig().anonKey);
   const [isTestingSupabase, setIsTestingSupabase] = useState(false);
+
+  const handleTestSupabaseConnection = async () => {
+    if (!supabaseUrl || !supabaseAnonKey) {
+      error('Please enter both Supabase Project URL and Anon Public Key.');
+      return;
+    }
+
+    setIsTestingSupabase(true);
+    saveSupabaseConfig(supabaseUrl, supabaseAnonKey);
+
+    try {
+      const client = getSupabaseClient();
+      if (!client) {
+        throw new Error('Could not create Supabase client. Please check URL format (e.g. https://xyz.supabase.co).');
+      }
+
+      const { data, count, error: queryError } = await client
+        .from('inquiries')
+        .select('*', { count: 'exact' })
+        .limit(1);
+
+      if (queryError) {
+        throw queryError;
+      }
+
+      success(`Connected to Supabase! Found ${count ?? 0} inquiries in public.inquiries.`);
+
+      const localInquiriesCount = store.getState().inquiries.length;
+      if (localInquiriesCount > 0 && window.confirm(`Found ${localInquiriesCount} local inquiries. Sync them to Supabase public.inquiries table now?`)) {
+        const syncResult = await store.syncAllInquiriesToSupabase();
+        success(`Synced ${syncResult.synced} inquiries to Supabase! (${syncResult.errors} skipped/failed)`);
+      }
+    } catch (err: any) {
+      console.error('Supabase test error:', err);
+      error(`Supabase connection failed: ${err.message || 'Check URL and Anon Key'}`);
+    } finally {
+      setIsTestingSupabase(false);
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -319,6 +358,22 @@ export const SettingsView: React.FC = () => {
                 className="w-full px-3 py-2 rounded-lg border border-zinc-300 font-mono"
               />
             </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-zinc-100">
+            <p className="text-[11px] text-zinc-500">
+              When connected, any new customer inquiries submitted from product cards or the contact page are automatically inserted into your Supabase <code className="bg-zinc-100 px-1 py-0.5 rounded font-mono">public.inquiries</code> table.
+            </p>
+
+            <button
+              type="button"
+              onClick={handleTestSupabaseConnection}
+              disabled={isTestingSupabase}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold text-xs transition cursor-pointer shadow-xs"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>{isTestingSupabase ? 'Verifying & Syncing...' : 'Test Connection & Sync Inquiries'}</span>
+            </button>
           </div>
         </div>
 

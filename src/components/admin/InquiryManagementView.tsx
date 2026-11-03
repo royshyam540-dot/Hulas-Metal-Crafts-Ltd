@@ -15,6 +15,7 @@ import {
   Trash2 
 } from 'lucide-react';
 import { useStore, store } from '../../services/store';
+import { isSupabaseConfigured } from '../../lib/supabaseClient';
 import { InquiryDetailModal } from './InquiryDetailModal';
 import { useToast } from '../common/Toast';
 
@@ -28,11 +29,30 @@ export const InquiryManagementView: React.FC<InquiryManagementViewProps> = ({
   onClearSelectedInquiry
 }) => {
   const { inquiries, settings } = useStore();
-  const { success } = useToast();
+  const { success, error: toastError } = useToast();
 
   const [search, setSearch] = useState('');
   const [selectedStatus, setSelectedStatus] = useState<string>('All');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const handleSyncSupabase = async () => {
+    if (!isSupabaseConfigured()) {
+      toastError('Supabase credentials not configured yet. Go to Admin Settings > Supabase Connection to set URL & Anon Key.');
+      return;
+    }
+
+    setIsSyncing(true);
+    try {
+      await store.fetchInquiriesFromSupabase();
+      const res = await store.syncAllInquiriesToSupabase();
+      success(`Supabase sync complete! Synced ${res.synced} inquiries to cloud database.`);
+    } catch (err: any) {
+      toastError(`Supabase sync error: ${err.message || 'Check network connection'}`);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const [activeInquiryModal, setActiveInquiryModal] = useState<Inquiry | null>(null);
 
@@ -131,13 +151,32 @@ export const InquiryManagementView: React.FC<InquiryManagementViewProps> = ({
           </p>
         </div>
 
-        <button
-          onClick={handleExportCSV}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-zinc-300 hover:bg-zinc-50 text-zinc-700 text-xs font-bold transition shadow-2xs cursor-pointer self-start sm:self-auto"
-        >
-          <Download className="w-3.5 h-3.5 text-zinc-500" />
-          <span>Export Inquiries CSV</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold ${
+            isSupabaseConfigured() ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-amber-50 text-amber-800 border border-amber-200'
+          }`}>
+            <span className={`w-2 h-2 rounded-full ${isSupabaseConfigured() ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`}></span>
+            {isSupabaseConfigured() ? 'Supabase Live Connected' : 'Local Storage Mode'}
+          </span>
+
+          <button
+            onClick={handleSyncSupabase}
+            disabled={isSyncing}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-xs font-bold transition shadow-2xs cursor-pointer"
+            title="Push local inquiries to Supabase and pull newest from cloud"
+          >
+            <RotateCcw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+            <span>{isSyncing ? 'Syncing...' : 'Sync with Supabase'}</span>
+          </button>
+
+          <button
+            onClick={handleExportCSV}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-zinc-300 hover:bg-zinc-50 text-zinc-700 text-xs font-bold transition shadow-2xs cursor-pointer"
+          >
+            <Download className="w-3.5 h-3.5 text-zinc-500" />
+            <span>Export CSV</span>
+          </button>
+        </div>
       </div>
 
       {/* Pipeline Status Counters */}
